@@ -5,16 +5,15 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectUtil;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
-
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+
 
 public class FileManager {
 
-    private Project project;
-    private boolean lombok;
-    private boolean singleton;
+    private final Project project;
+    private final boolean lombok;
+    private final boolean singleton;
     private VirtualFile root;
 
     FileManager(Project project,boolean lombok, boolean singleton){
@@ -52,14 +51,28 @@ public class FileManager {
 
                 // Crear el paquete model
                 VfsUtil.createDirectoryIfMissing(root, "model");
-                VfsUtil.createDirectoryIfMissing(root, "repository");
                 VfsUtil.createDirectoryIfMissing(root, "service");
                 VfsUtil.createDirectoryIfMissing(root, "controller");
                 VfsUtil.createDirectoryIfMissing(root, "view");
                 VfsUtil.createDirectoryIfMissing(root, "config");
-                // Crear el paquete view
+                VfsUtil.createDirectoryIfMissing(root, "repository");
+                VirtualFile repositoryDir = root.findChild("repository");
+                VfsUtil.createDirectoryIfMissing(repositoryDir,"interfaces");
+                VirtualFile interfaceDir = repositoryDir.findChild("interfaces");
 
-                // Crear el paquete controller
+
+                String className = "IActions.java";
+                VirtualFile[] classFile = new VirtualFile[1];
+                classFile[0] = interfaceDir.createChildData(null, className);
+
+                WriteCommandAction.runWriteCommandAction(project, () -> {
+                    try {
+                        classFile[0].setBinaryContent(generateInterface().getBytes());
+                    } catch (IOException e) {
+                        throw new RuntimeException("No se pudo escribir en el archivo para la clase " + className, e);
+                    }
+                });
+
 
             } catch (IOException e) {
                 throw new RuntimeException("No se pudieron crear los paquetes MVC", e);
@@ -83,18 +96,26 @@ public class FileManager {
         });
 
         String classContent;
-        if (singleton && (packageName.equals("repository") || packageName.equals("service") || packageName.equals("controller"))) {
+
+        if (packageName.equals("repository")) {
+            // Si es repositorio, usa el generador especial que ya implementaste
+            classContent = generateRepository(className);
+        } else if (singleton && (packageName.equals("service") || packageName.equals("controller"))) {
+            // Si es service o controller Y querés singleton
             classContent = "package " + packageName + ";\n\n" +
                     (lombok ? "import lombok.Getter;\n\n" : "") +
                     "public class " + className + " {\n" +
-                    generateSingleton(className, lombok) + "\n}";
+                    generateSingleton(className) + "\n}";
         } else {
+            // Clase vacía normal
             classContent = "package " + packageName + ";\n\npublic class " + className + " {\n\n}";
         }
 
+        String finalClassContent = classContent;
+
         WriteCommandAction.runWriteCommandAction(project, () -> {
             try {
-                classFile[0].setBinaryContent(classContent.getBytes());
+                classFile[0].setBinaryContent(finalClassContent.getBytes());
             } catch (IOException e) {
                 throw new RuntimeException("No se pudo escribir en el archivo para la clase " + className, e);
             }
@@ -112,7 +133,7 @@ public class FileManager {
         }
     }
 
-    public static String generateSingleton(String className,boolean lombok){
+    public String generateSingleton(String className){
 
         if(lombok){
             return "\n@Getter\n" +
@@ -121,5 +142,82 @@ public class FileManager {
 
         return "private static final " + className + " instance = new "+ className + "();";
     }
+
+
+    public static String generateInterface(){
+        return """
+                import java.sql.SQLException;
+                import java.util.List;
+                import java.util.Optional;
+                
+                public interface IActions<T> {
+                    void save(T obj) throws SQLException;
+                    Optional<T> find(int id) throws SQLException;
+                    List<T> findAll() throws SQLException;
+                    void delete(int id) throws SQLException;
+                    void update(T obj) throws SQLException;
+                }
+                
+                """;
+    }
+
+    public String generateRepository(String className) {
+        String classContent;
+
+        // Obtener el nombre base (ej.: de PersonaRepository => Persona)
+        String baseName = className.replace("Repository", "");
+        String entityName = baseName + "Entity";
+
+        // Inicia el contenido de la clase con los imports básicos
+        classContent = """
+                import java.sql.SQLException;
+                import java.util.List;
+                import java.util.Optional;
+                
+                """;
+
+        // Sí se usa Lombok, añadir las importaciones correspondientes
+        if (lombok) {
+            classContent += "import lombok.Getter;\n\n";
+        }
+
+        // Comienza la declaración de la clase
+        classContent += "public class " + className + " implements IActions<" + entityName + "> {\n\n";
+
+        // Si la clase debe ser Singleton
+        if (singleton) {
+            if (lombok) {
+                classContent += "    @Getter\n";
+            }
+            classContent += "    private static final " + className + " instance = new " + className + "();\n\n";
+        }
+
+        // Métodos de la interfaz IActions
+        classContent += "    @Override\n" +
+                "    public void save(" + entityName + " obj) throws SQLException {\n" +
+                "        // Implement save logic\n" +
+                "    }\n\n" +
+                "    @Override\n" +
+                "    public Optional<" + entityName + "> find(int id) throws SQLException {\n" +
+                "        return Optional.empty();\n" +
+                "    }\n\n" +
+                "    @Override\n" +
+                "    public List<" + entityName + "> findAll() throws SQLException {\n" +
+                "        return List.of();\n" +
+                "    }\n\n" +
+                "    @Override\n" +
+                "    public void delete(int id) throws SQLException {\n" +
+                "        // Implement delete logic\n" +
+                "    }\n\n" +
+                "    @Override\n" +
+                "    public void update(" + entityName + " obj) throws SQLException {\n" +
+                "        // Implement update logic\n" +
+                "    }\n" +
+                "}";
+
+        return classContent;
+    }
+
+
 }
 
