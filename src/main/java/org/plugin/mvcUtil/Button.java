@@ -39,8 +39,11 @@ public class Button extends AnAction {
             boolean usarSingleton = dialog.isSingletonEnabled();
             boolean usarLombok = dialog.isLombokEnabled();
 
-            FileManager.createMvcPackages(project);
-            FileManager.createMvcClasses(project,classList,usarSingleton,usarLombok);
+            FileManager fileManager = new FileManager(project,usarLombok,usarSingleton);
+
+
+            fileManager.createMvcPackages();
+            fileManager.createMvcClasses(classList);
         }
     }
 }

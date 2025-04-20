@@ -12,34 +12,51 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class FileManager {
 
-    public static void createMvcPackages(Project project) {
-        // Obtener la raíz del proyecto
-        VirtualFile baseDir = ProjectUtil.guessProjectDir(project);
+    private Project project;
+    private boolean lombok;
+    private boolean singleton;
+    private VirtualFile root;
 
-        // Buscar la carpeta src dentro de la raíz del proyecto
-        final VirtualFile srcDir = baseDir.findChild("src");
-        if (srcDir == null) {
-            // Si no existe, se crea la carpeta src
-            WriteCommandAction.runWriteCommandAction(project, () -> {
-                try {
-                    VfsUtil.createDirectoryIfMissing(baseDir, "src");
-                } catch (IOException e) {
-                    throw new RuntimeException("No se pudo crear la carpeta src", e);
-                }
-            });
-        }
+    FileManager(Project project,boolean lombok, boolean singleton){
+        this.lombok = lombok;
+        this.singleton = singleton;
+        this.project = project;
+        generateRoot();
+
+    }
+
+
+    private void generateRoot() {
+
+        root = ProjectUtil.guessProjectDir(project);
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            try {
+                VfsUtil.createDirectoryIfMissing(root, "src");
+                root = ProjectUtil.guessProjectDir(project).findChild("src");
+                VfsUtil.createDirectoryIfMissing(root, "generated");
+                root = root.findChild("generated");
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+
+    public void createMvcPackages() {
+
 
         // Crear los paquetes para MVC dentro de src
         WriteCommandAction.runWriteCommandAction(project, () -> {
             try {
 
                 // Crear el paquete model
-                VfsUtil.createDirectoryIfMissing(srcDir, "model");
-                VfsUtil.createDirectoryIfMissing(srcDir, "repository");
-                VfsUtil.createDirectoryIfMissing(srcDir, "service");
-                VfsUtil.createDirectoryIfMissing(srcDir, "controller");
-                VfsUtil.createDirectoryIfMissing(srcDir, "view");
-                VfsUtil.createDirectoryIfMissing(srcDir, "config");
+                VfsUtil.createDirectoryIfMissing(root, "model");
+                VfsUtil.createDirectoryIfMissing(root, "repository");
+                VfsUtil.createDirectoryIfMissing(root, "service");
+                VfsUtil.createDirectoryIfMissing(root, "controller");
+                VfsUtil.createDirectoryIfMissing(root, "view");
+                VfsUtil.createDirectoryIfMissing(root, "config");
                 // Crear el paquete view
 
                 // Crear el paquete controller
@@ -52,79 +69,46 @@ public class FileManager {
 
 
     // Método principal para crear paquetes y clases
-    public static void createMvcClass(Project project, String packageName, String className, boolean singleton, boolean lombok) {
-        // Obtener la raíz del proyecto
-        VirtualFile baseDir = project.getBaseDir();
-        VirtualFile srcDir = baseDir.findChild("src");
-
-        if (srcDir == null) {
-            throw new RuntimeException("El directorio 'src' no existe.");
-        }
-
-        // Crear el paquete si no existe
-        VirtualFile packageDir = srcDir.findChild(packageName);
-        if (packageDir == null) {
-            try {
-                packageDir = VfsUtil.createDirectoryIfMissing(srcDir, packageName);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        // Crear el archivo de la clase
+    public void createMvcClass(String packageName, String className) {
         String classFileName = className + ".java";
-        AtomicReference<VirtualFile> classFile = new AtomicReference<>(packageDir.findChild(classFileName));
+        VirtualFile packageDir = root.findChild(packageName); // asumimos que ya existe
+        VirtualFile[] classFile = new VirtualFile[1];
 
-        if (classFile.get() == null) {
-            // Usamos WriteCommandAction para crear el archivo en el sistema de archivos de IntelliJ
-            VirtualFile finalPackageDir = packageDir;
-            WriteCommandAction.runWriteCommandAction(project, () -> {
-                try {
-                    classFile.set(finalPackageDir.createChildData(null, classFileName));  // Crea el archivo sin 'this'
-                } catch (IOException e) {
-                    throw new RuntimeException("No se pudo crear el archivo para la clase " + className, e);
-                }
-            });
-        }
-
-        String classContent = "";
-
-        if(singleton){
-            if(packageName.equals("repository") || packageName.equals("service") || packageName.equals("controller")) {
-                classContent = "package " + packageName + ";\npublic class " + className + " {\n" +
-                        generateSingleton(className,lombok) + "   \n" +
-                        "}";
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            try {
+                classFile[0] = packageDir.createChildData(null, classFileName);
+            } catch (IOException e) {
+                throw new RuntimeException("No se pudo crear el archivo para la clase " + className, e);
             }
+        });
+
+        String classContent;
+        if (singleton && (packageName.equals("repository") || packageName.equals("service") || packageName.equals("controller"))) {
+            classContent = "package " + packageName + ";\n\n" +
+                    (lombok ? "import lombok.Getter;\n\n" : "") +
+                    "public class " + className + " {\n" +
+                    generateSingleton(className, lombok) + "\n}";
+        } else {
+            classContent = "package " + packageName + ";\n\npublic class " + className + " {\n\n}";
         }
-            else
-            {
-                classContent = "package " + packageName + ";\npublic class " + className + " {\n" +
-                        " \n" +
-                        "}";
+
+        WriteCommandAction.runWriteCommandAction(project, () -> {
+            try {
+                classFile[0].setBinaryContent(classContent.getBytes());
+            } catch (IOException e) {
+                throw new RuntimeException("No se pudo escribir en el archivo para la clase " + className, e);
             }
-
-
-        // Escribir el contenido en el archivo
-        if (classFile.get() != null) {
-            String finalClassContent = classContent;
-            WriteCommandAction.runWriteCommandAction(project, () -> {
-                try {
-                    classFile.get().setBinaryContent(finalClassContent.getBytes()); // Escribe el contenido en el archivo
-                } catch (IOException e) {
-                    throw new RuntimeException("No se pudo escribir en el archivo para la clase " + className, e);
-                }
-            });
-        }
+        });
     }
 
     // Método para crear varias clases en diferentes paquetes
-    public static void createMvcClasses(Project project, List<String> classNames,boolean singleton, boolean lombok) {
+    public void createMvcClasses(List<String> classNames) {
 
         for (String className : classNames) {
-            createMvcClass(project, "model", className + "Entity",singleton,lombok);
-            createMvcClass(project, "controller", className + "Controller",singleton,lombok);
-            createMvcClass(project, "service", className + "Service",singleton,lombok);
-            createMvcClass(project, "repository", className + "Repository",singleton,lombok);
+            createMvcClass("model", className + "Entity");
+            createMvcClass("controller", className + "Controller");
+            createMvcClass("service", className + "Service");
+            createMvcClass("repository", className + "Repository");
         }
     }
 
